@@ -3,6 +3,29 @@ document.addEventListener("DOMContentLoaded", () => {
   const activitySelect = document.getElementById("activity");
   const signupForm = document.getElementById("signup-form");
   const messageDiv = document.getElementById("message");
+  const loginButton = document.getElementById("login-button");
+  const logoutButton = document.getElementById("logout-button");
+  const loginForm = document.getElementById("login-form");
+  const loginContainer = document.getElementById("login-container");
+  const authMessageDiv = document.getElementById("auth-message");
+  const signupContainer = document.getElementById("signup-container");
+  const teacherStatus = document.getElementById("teacher-status");
+  const teacherName = document.getElementById("teacher-name");
+  let isTeacher = false;
+
+  function updateAuthUI(username) {
+    isTeacher = Boolean(username);
+    loginButton.classList.toggle("hidden", isTeacher);
+    loginContainer.classList.add("hidden");
+    signupContainer.classList.toggle("hidden", !isTeacher);
+    teacherStatus.classList.toggle("hidden", !isTeacher);
+    if (isTeacher) {
+      teacherName.textContent = username;
+    }
+    document.querySelectorAll(".delete-btn").forEach((button) => {
+      button.classList.toggle("hidden", !isTeacher);
+    });
+  }
 
   // Function to fetch activities from API
   async function fetchActivities() {
@@ -30,7 +53,7 @@ document.addEventListener("DOMContentLoaded", () => {
                 ${details.participants
                   .map(
                     (email) =>
-                      `<li><span class="participant-email">${email}</span><button class="delete-btn" data-activity="${name}" data-email="${email}">❌</button></li>`
+                      `<li><span class="participant-email">${email}</span><button class="delete-btn${isTeacher ? "" : " hidden"}" data-activity="${name}" data-email="${email}">❌</button></li>`
                   )
                   .join("")}
               </ul>
@@ -110,6 +133,39 @@ document.addEventListener("DOMContentLoaded", () => {
     }
   }
 
+  loginButton.addEventListener("click", () => {
+    loginContainer.classList.toggle("hidden");
+  });
+
+  logoutButton.addEventListener("click", async () => {
+    await fetch("/auth/logout", { method: "POST" });
+    updateAuthUI(null);
+    fetchActivities();
+  });
+
+  loginForm.addEventListener("submit", async (event) => {
+    event.preventDefault();
+    const response = await fetch("/auth/login", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        username: document.getElementById("username").value,
+        password: document.getElementById("password").value,
+      }),
+    });
+    const result = await response.json();
+    if (!response.ok) {
+      authMessageDiv.textContent = result.detail || "Unable to log in";
+      authMessageDiv.className = "error";
+      authMessageDiv.classList.remove("hidden");
+      return;
+    }
+    authMessageDiv.classList.add("hidden");
+    loginForm.reset();
+    updateAuthUI(result.username);
+    fetchActivities();
+  });
+
   // Handle form submission
   signupForm.addEventListener("submit", async (event) => {
     event.preventDefault();
@@ -156,5 +212,14 @@ document.addEventListener("DOMContentLoaded", () => {
   });
 
   // Initialize app
-  fetchActivities();
+  fetch("/auth/me")
+    .then((response) => (response.ok ? response.json() : null))
+    .then((teacher) => {
+      updateAuthUI(teacher?.username);
+      fetchActivities();
+    })
+    .catch(() => {
+      updateAuthUI(null);
+      fetchActivities();
+    });
 });

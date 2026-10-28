@@ -5,7 +5,8 @@ A super simple FastAPI application that allows students to view and sign up for 
 ## Features
 
 - View all available extracurricular activities
-- Sign up for activities
+- Sign up for activities as an authenticated teacher
+- Unregister students as an authenticated teacher
 
 ## Getting Started
 
@@ -46,5 +47,18 @@ The application uses a simple data model with meaningful identifiers:
 2. **Students** - Uses email as identifier:
    - Name
    - Grade level
+
+3. **Teachers** - Stored in `src/teachers.json`:
+   - Username
+   - PBKDF2 password hash
+   - Unique salt
+
+To add a teacher, generate a salt and password hash with:
+
+```bash
+python -c "import hashlib, secrets; p='replace-with-password'; s=secrets.token_hex(16); print({'username': 'teacher', 'salt': s, 'password_hash': hashlib.pbkdf2_hmac('sha256', p.encode(), s.encode(), 120000).hex()})"
+```
+
+Add the resulting object to the `teachers` array in `src/teachers.json`. Activity browsing remains public, but signup and unregister requests require a teacher login.
 
 All data is stored in memory, which means data will be reset when the server restarts.
