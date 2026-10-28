@@ -5,10 +5,16 @@ A super simple FastAPI application that allows students to view and sign up
 for extracurricular activities at Mergington High School.
 """
 
-from fastapi import FastAPI, HTTPException
+from fastapi import Cookie, Depends, FastAPI, HTTPException
 from fastapi.staticfiles import StaticFiles
 from fastapi.responses import RedirectResponse
+from fastapi.responses import JSONResponse
+from pydantic import BaseModel
+import hashlib
+import hmac
+import json
 import os
+import secrets
 from pathlib import Path
 
 app = FastAPI(title="Mergington High School API",
@@ -18,6 +24,52 @@ app = FastAPI(title="Mergington High School API",
 current_dir = Path(__file__).parent
 app.mount("/static", StaticFiles(directory=os.path.join(Path(__file__).parent,
           "static")), name="static")
+teachers_file = current_dir / "teachers.json"
+sessions = {}
+
+
+class LoginRequest(BaseModel):
+    username: str
+    password: str
+
+
+def load_teachers():
+    try:
+        with teachers_file.open(encoding="utf-8") as file:
+            data = json.load(file)
+    except (OSError, json.JSONDecodeError) as error:
+        raise RuntimeError(f"Unable to load teacher credentials: {error}") from error
+
+    teachers = data.get("teachers")
+    if not isinstance(teachers, list):
+        raise RuntimeError("Teacher credentials must contain a 'teachers' list")
+    return teachers
+
+
+def hash_password(password, salt):
+    return hashlib.pbkdf2_hmac(
+        "sha256", password.encode(), salt.encode(), 120_000
+    ).hex()
+
+
+def authenticate_teacher(username, password):
+    for teacher in load_teachers():
+        if teacher.get("username") != username:
+            continue
+        salt = teacher.get("salt")
+        password_hash = teacher.get("password_hash")
+        if not salt or not password_hash:
+            continue
+        if hmac.compare_digest(hash_password(password, salt), password_hash):
+            return username
+    return None
+
+
+def require_teacher(session: str | None = Cookie(default=None, alias="teacher_session")):
+    username = sessions.get(session)
+    if not username:
+        raise HTTPException(status_code=401, detail="Teacher login required")
+    return username
 
 # In-memory activity database
 activities = {
@@ -88,8 +140,49 @@ def get_activities():
     return activities
 
 
+@app.post("/auth/login")
+def login(credentials: LoginRequest):
+    username = authenticate_teacher(credentials.username, credentials.password)
+    if not username:
+        raise HTTPException(status_code=401, detail="Invalid teacher credentials")
+
+    session = secrets.token_urlsafe(32)
+    sessions[session] = username
+    response = JSONResponse({"username": username})
+    response.set_cookie(
+        "teacher_session",
+        session,
+        httponly=True,
+        samesite="lax",
+        max_age=8 * 60 * 60,
+    )
+    return response
+
+
+@app.get("/auth/me")
+def current_teacher(
+    username: str = Depends(require_teacher),
+):
+    return {"username": username}
+
+
+@app.post("/auth/logout")
+def logout(
+    session: str | None = Cookie(default=None, alias="teacher_session"),
+):
+    if session:
+        sessions.pop(session, None)
+    response = JSONResponse({"message": "Logged out"})
+    response.delete_cookie("teacher_session")
+    return response
+
+
 @app.post("/activities/{activity_name}/signup")
-def signup_for_activity(activity_name: str, email: str):
+def signup_for_activity(
+    activity_name: str,
+    email: str,
+    _teacher: str = Depends(require_teacher),
+):
     """Sign up a student for an activity"""
     # Validate activity exists
     if activity_name not in activities:
@@ -111,7 +204,11 @@ def signup_for_activity(activity_name: str, email: str):
 
 
 @app.delete("/activities/{activity_name}/unregister")
-def unregister_from_activity(activity_name: str, email: str):
+def unregister_from_activity(
+    activity_name: str,
+    email: str,
+    _teacher: str = Depends(require_teacher),
+):
     """Unregister a student from an activity"""
     # Validate activity exists
     if activity_name not in activities:
